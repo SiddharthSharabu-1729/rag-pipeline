@@ -1,0 +1,48 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    container_name: rag-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      - USE_IN_MEMORY_QDRANT=False
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION_NAME=rag_enterprise_docs
+      - EMBEDDING_PROVIDER=mock
+      - LLM_PROVIDER=mock
+      - SEMANTIC_CACHE_ENABLED=True
+      - ENABLE_PII_MASKING=True
+      - ENABLE_SELF_RAG_VERIFICATION=True
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import httpx; res = httpx.get('http://localhost:8000/api/v1/health'); assert res.status_code == 200\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  qdrant_storage:
+    driver: local
+
