@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     qdrant_path: str | None = None  # Local persistence directory if not in-memory
     qdrant_collection_name: str = "rag_enterprise_docs"
     use_in_memory_qdrant: bool = True  # Defaults to True for zero-friction local run/testing
+    max_upload_bytes: int = 10 * 1024 * 1024
 
     # Embeddings
     embedding_provider: Literal["openai", "mock", "custom"] = "mock"

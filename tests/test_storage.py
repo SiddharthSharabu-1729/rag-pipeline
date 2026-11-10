@@ -109,3 +109,30 @@ async def test_semantic_cache():
     miss = await cache.get(diff_vec)
     assert miss is None
 
+
+
+@pytest.mark.asyncio
+async def test_semantic_cache_isolated_by_context():
+    cache = SemanticCache(threshold=0.90)
+    embedder = MockEmbeddingClient(dimension=64)
+    vector = await embedder.aembed_query("What is the holiday leave policy?")
+    response = RAGResponse(query="leave policy", answer="Private answer")
+    await cache.put("leave policy", vector, response, context_key="tenant-a")
+    assert await cache.get(vector, context_key="tenant-b") is None
+    hit = await cache.get(vector, context_key="tenant-a")
+    assert hit is not None and hit.answer == "Private answer"
+
+
+@pytest.mark.asyncio
+async def test_semantic_cache_rejects_different_vector_dimensions():
+    cache = SemanticCache(threshold=0.90)
+    response = RAGResponse(query="question", answer="answer")
+    await cache.put("question", [1.0, 0.0], response)
+    assert await cache.get([1.0, 0.0, 0.0]) is None
+
+
+def test_qdrant_acl_filter_for_ungrouped_caller_only_matches_public():
+    store = QdrantVectorStore(collection_name="acl-filter-test", dense_dim=4)
+    q_filter = store._build_filter(Query(text="public data"))
+    assert q_filter is not None
+    assert q_filter.should is not None and len(q_filter.should) == 1

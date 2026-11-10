@@ -1,6 +1,8 @@
-# Enterprise Production-Grade End-to-End RAG Pipeline
+# Modular Hybrid Retrieval-Augmented Generation Pipeline
 
-A robust, enterprise-ready, modular Retrieval-Augmented Generation (RAG) system engineered for high faithfulness, sub-second latency, deterministic citation grounding, and full observability.
+An extensible RAG application demonstrating document ingestion, dense and sparse retrieval, reciprocal-rank fusion, optional reranking, response generation, caching, and a FastAPI interface.
+
+**Status:** portfolio/reference implementation. The default configuration uses mock embeddings and a mock LLM. It is not security-audited or production-validated; deploy behind an authenticated gateway and validate retrieval quality, latency, and isolation before production use.
 
 ---
 
@@ -25,7 +27,7 @@ flowchart TD
         UserQuery["User Query"]
         GuardIn["Input Guardrails & Sanitization"]
         Cache{"Semantic Cache Hit?"}
-        CachedResp["Cached Response (<15ms)"]
+        CachedResp["Cached response (in-memory semantic cache)"]
         Router["Query Transformer & Sub-Queries"]
 
         UserQuery --> GuardIn --> Cache
@@ -35,7 +37,7 @@ flowchart TD
         DenseSearch["Dense Vector Search (Top-20)"]
         SparseSearch["Sparse BM25 Search (Top-20)"]
         RRF["Reciprocal Rank Fusion (RRF)"]
-        Reranker["Cross-Encoder Precision Reranker"]
+        Reranker["Optional FlashRank / lexical heuristic reranker"]
         LostInMiddle["Context Optimizer (Lost-in-the-Middle)"]
 
         Router --> DenseSearch & SparseSearch
@@ -57,7 +59,7 @@ flowchart TD
 ### Core Production Pillars
 
 1. **Change Data Capture (CDC) & Layout-Aware Ingestion**:
-   - Computes SHA-256 content hashes to avoid redundant re-embedding.
+   - Computes SHA-256 content hashes for duplicate detection within the lifetime of the ingestion process (not durable CDC).
    - Extracts page numbers, section hierarchies, and titles.
    - Preserves source attribution metadata (`doc_id`, `parent_id`, `page_number`).
 
@@ -65,33 +67,33 @@ flowchart TD
    - Generates granular leaf chunks (150–200 tokens) for sharp semantic matching.
    - Links each leaf chunk to its parent context window (800–1000 tokens) so the LLM receives complete context without fragmentation.
 
-3. **Hybrid Search (Dense + Sparse BM25)**:
-   - Combines dense semantic embeddings with sparse BM25 lexical term vectors.
+3. **Hybrid Search (Dense + Sparse Lexical)**:
+   - Combines dense semantic embeddings with sparse lexical term weights. The current encoder uses BM25-style term-frequency normalization with a fixed reference document length; it does not calculate corpus-level inverse document frequency and is not full BM25.
    - Merges results via **Reciprocal Rank Fusion (RRF)**:
      $$RRF(d) = \sum_{m \in \{\text{dense}, \text{sparse}\}} \frac{1}{k + \text{rank}_m(d)}$$
    - Prevents blind spots on exact product names, acronyms, and part numbers.
 
-4. **Two-Stage Retrieval & Cross-Encoder Re-Ranking**:
-   - Stage 1: High-recall broad search (top 20 candidates).
-   - Stage 2: Deep joint cross-attention reranking (top 5 candidates).
+4. **Two-Stage Retrieval & Optional Re-Ranking**:
+   - Stage 1: Dense and sparse candidate retrieval with reciprocal-rank fusion.
+   - Stage 2: FlashRank can be enabled as an optional model-backed reranker. The default fallback uses lexical overlap and proximity heuristics, not a cross-encoder.
 
 5. **Context Window Attention (Lost-in-the-Middle Mitigation)**:
    - Rearranges candidate chunks dynamically so that the highest scoring chunks sit at the extreme beginning and end of the context window.
 
-6. **Self-RAG / Corrective RAG (CRAG) Verification**:
-   - Automated evaluation of claim-level entailment against retrieved context.
+6. **Heuristic Grounding & Citation Checks**:
+   - Uses keyword overlap as a lightweight heuristic against retrieved context; this is not semantic entailment or a validated hallucination detector.
    - Validates that every bracketed citation `[Ref-X]` matches real retrieved evidence.
    - Automatically re-prompts for self-correction if ungrounded claims are detected.
 
-7. **Semantic Caching (< 15ms Response)**:
-   - Evaluates incoming query vectors against cached query embeddings using cosine similarity.
-   - Returns instant responses for repeated or semantically equivalent questions, eliminating unnecessary LLM token cost.
+7. **In-Memory Semantic Cache**:
+   - Compares query embeddings using cosine similarity and a configurable threshold.
+   - Cache entries are isolated by user, ACL groups, metadata filters, and retrieval history. Similarity is only a cache heuristic and does not prove two questions are equivalent; measure latency in your deployment.
 
 8. **Enterprise Guardrails & PII Masking**:
    - Redacts email addresses, telephone numbers, Social Security numbers, credit cards, and secret API keys before final output delivery.
 
-9. **Quantitative Evaluation Suite (RAG Triad)**:
-   - Measures **Context Precision**, **Context Recall**, **Faithfulness**, and **Answer Relevance**.
+9. **Heuristic Evaluation Utilities**:
+   - Provides keyword-overlap approximations for context precision, context recall, faithfulness, and answer relevance. These are smoke-test indicators, not substitutes for labeled datasets or model-based evaluation.
 
 ---
 
@@ -204,3 +206,16 @@ curl -N -X POST "http://localhost:8000/api/v1/query/stream" \
 | `ENABLE_PII_MASKING` | `True` | Auto-mask emails, phone numbers, and keys |
 | `ENABLE_SELF_RAG_VERIFICATION` | `True` | Hallucination and citation verification |
 
+
+
+## Security and deployment notes
+
+- The API currently has no built-in user authentication. Do not expose ingestion or query endpoints directly to the public internet; place them behind an authenticated gateway and derive ACL groups from trusted identity claims, not arbitrary client input.
+- Qdrant ports in the Compose file are published for local development. Restrict them to trusted networks and configure Qdrant authentication/TLS before remote deployment.
+- CORS is configured for local/demo use with credentials disabled. Restrict allowed origins before browser-based deployment.
+- File uploads are limited to 10 MiB by default. Adjust MAX_UPLOAD_BYTES only after considering memory and parser resource limits.
+- The semantic cache is process-local and non-persistent. It is context-namespaced, but it is not a substitute for authorization checks on retrieval.
+
+## Reranker configuration
+
+The default RERANKER_PROVIDER=rule_based uses lexical heuristics. To use the optional FlashRank model-backed reranker, install the optional flashrank package and set RERANKER_PROVIDER=flashrank. If model initialization or inference fails, the application logs a warning and falls back to lexical heuristics.
