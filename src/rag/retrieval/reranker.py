@@ -1,11 +1,14 @@
 """Cross-encoder re-ranking engine for precision scoring and noise elimination."""
 
 from abc import ABC, abstractmethod
+import logging
 import math
 import re
 from typing import Any
 from rag.config import settings
 from rag.domain.models import SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class BaseReranker(ABC):
@@ -23,10 +26,10 @@ class BaseReranker(ABC):
 
 
 class CrossEncoderReranker(BaseReranker):
-    """Production cross-encoder reranker.
+    """Use FlashRank when available; otherwise use lexical heuristic scoring.
 
-    Computes deep cross-token alignment, exact phrase containment, and term proximity.
-    Can dynamically bridge to FlashRank when explicitly configured.
+    The built-in fallback is not a cross-encoder and does not perform neural
+    semantic reranking. Configure the flashrank provider to use the optional model.
     """
 
     def __init__(self, top_k: int = settings.top_k_rerank) -> None:
@@ -40,7 +43,8 @@ class CrossEncoderReranker(BaseReranker):
         try:
             from flashrank import Ranker
             self._flashrank_client = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir="/tmp/flashrank")
-        except Exception:
+        except Exception as exc:
+            logger.warning("FlashRank unavailable; using lexical heuristic reranking: %s", exc)
             self._flashrank_client = None
 
     def _score_pair(self, query: str, passage: str) -> float:
@@ -98,10 +102,10 @@ class CrossEncoderReranker(BaseReranker):
                     res.retrieval_method = "reranked"
                     reranked_results.append(res)
                 return reranked_results
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("FlashRank reranking failed; using lexical heuristic fallback: %s", exc)
 
-        # Fallback to optimized native cross-token alignment scorer
+        # Fallback to lexical heuristic scoring (not a neural cross-encoder)
         scored_candidates: list[SearchResult] = []
         for cand in candidates:
             score = self._score_pair(query, cand.chunk.content)

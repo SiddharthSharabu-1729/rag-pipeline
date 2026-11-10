@@ -1,6 +1,8 @@
 """End-to-end production RAG pipeline orchestrator with streaming and observability."""
 
 import asyncio
+import hashlib
+import json
 import time
 from typing import Any, AsyncIterator
 from rag.config import settings
@@ -94,7 +96,13 @@ class RAGPipeline:
         t_cache = time.perf_counter()
         async with tracer.aspan(trace, "semantic_cache_probe"):
             query_vector = await self.embedding_client.aembed_query(query.text)
-            cached_response = await self.cache.get(query_vector)
+            cache_context = json.dumps(
+                {"user_id": user_id, "acl_groups": sorted(acl_groups or []),
+                 "filters": filters or {}, "history": history or []},
+                sort_keys=True, default=str, separators=(",", ":"),
+            )
+            cache_context_key = hashlib.sha256(cache_context.encode("utf-8")).hexdigest()
+            cached_response = await self.cache.get(query_vector, context_key=cache_context_key)
             latencies.cache_check_ms = (time.perf_counter() - t_cache) * 1000.0
 
             if cached_response:
@@ -181,7 +189,7 @@ class RAGPipeline:
         )
 
         # 9. Store in Semantic Cache
-        await self.cache.put(query.text, query_vector, response)
+        await self.cache.put(query.text, query_vector, response, context_key=cache_context_key)
 
         # Record completed trace
         await tracer.record_trace(trace)

@@ -35,7 +35,7 @@ async def query_endpoint(req: QueryRequest, request: Request) -> RAGResponse:
         )
         return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Query processing failed.") from e
 
 
 @router.post("/stream")
@@ -54,8 +54,8 @@ async def stream_query_endpoint(req: QueryRequest, request: Request):
                 event_name = event.get("event", "message")
                 data_json = json.dumps(event.get("data", {}))
                 yield f"event: {event_name}\ndata: {data_json}\n\n"
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        except Exception:
+            yield f"event: error\ndata: {json.dumps({'error': 'Query streaming failed.'})}\n\n"
 
     return StreamingResponse(
         event_generator(),

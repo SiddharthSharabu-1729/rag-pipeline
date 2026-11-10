@@ -12,6 +12,7 @@ class CacheEntry(NamedTuple):
     query_text: str
     vector: list[float]
     response: RAGResponse
+    context_key: str
     created_at: float
     last_accessed: float
 
@@ -41,7 +42,7 @@ class SemanticCache:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    async def get(self, query_vector: list[float]) -> RAGResponse | None:
+    async def get(self, query_vector: list[float], context_key: str = "default") -> RAGResponse | None:
         """Search cache for a query vector exceeding semantic similarity threshold."""
         if not settings.semantic_cache_enabled:
             return None
@@ -56,6 +57,8 @@ class SemanticCache:
             for entry in self._entries:
                 if now - entry.created_at <= self.ttl_seconds:
                     valid_entries.append(entry)
+                    if entry.context_key != context_key or len(query_vector) != len(entry.vector):
+                        continue
                     sim = self._cosine_similarity(query_vector, entry.vector)
                     if sim > highest_sim:
                         highest_sim = sim
@@ -65,6 +68,11 @@ class SemanticCache:
 
             if best_match and highest_sim >= self.threshold:
                 # Update last accessed for LRU
+                self._entries = [
+                    CacheEntry(e.query_text, e.vector, e.response, e.context_key, e.created_at, now)
+                    if e is best_match else e
+                    for e in self._entries
+                ]
                 cached_resp = best_match.response.model_copy(deep=True)
                 cached_resp.from_cache = True
                 cached_resp.latency.cache_check_ms = 5.0
@@ -72,7 +80,10 @@ class SemanticCache:
 
         return None
 
-    async def put(self, query_text: str, query_vector: list[float], response: RAGResponse) -> None:
+    async def put(
+        self, query_text: str, query_vector: list[float], response: RAGResponse,
+        context_key: str = "default",
+    ) -> None:
         """Store a verified response in the semantic cache."""
         if not settings.semantic_cache_enabled:
             return
@@ -94,6 +105,7 @@ class SemanticCache:
                     query_text=query_text,
                     vector=query_vector,
                     response=clean_resp,
+                    context_key=context_key,
                     created_at=now,
                     last_accessed=now,
                 )

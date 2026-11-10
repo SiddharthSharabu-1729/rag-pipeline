@@ -2,6 +2,7 @@
 
 from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from rag.config import settings
 from pydantic import BaseModel, Field
 from rag.ingestion.parsers.factory import ParserFactory
 from rag.ingestion.pipeline import IngestionPipeline
@@ -29,7 +30,7 @@ async def ingest_text_endpoint(req: IngestTextRequest, request: Request):
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Document ingestion failed.") from e
 
 
 @router.post("/file")
@@ -43,7 +44,9 @@ async def ingest_file_endpoint(
     """Upload and ingest a document file (PDF, Markdown, Text)."""
     ingestion: IngestionPipeline = request.app.state.ingestion
     try:
-        content_bytes = await file.read()
+        content_bytes = await file.read(settings.max_upload_bytes + 1)
+        if len(content_bytes) > settings.max_upload_bytes:
+            raise HTTPException(status_code=413, detail="Uploaded file exceeds the configured size limit.")
         filename = file.filename or "unknown_file"
         doc_title = title or filename
 
@@ -62,8 +65,10 @@ async def ingest_file_endpoint(
 
         result = await ingestion.ingest_document(document, force_reindex=force_reindex)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Document ingestion failed.") from e
 
 
 @router.delete("/documents/{doc_id}")
@@ -74,5 +79,5 @@ async def delete_document_endpoint(doc_id: str, request: Request):
         await ingestion.vector_store.delete_by_doc_id(doc_id)
         return {"doc_id": doc_id, "status": "deleted"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Document deletion failed.") from e
 

@@ -33,7 +33,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Clean up resources if necessary
+    close = getattr(vector_store.client, "close", None)
+    if close is not None:
+        await close()
 
 
 app = FastAPI(
@@ -47,7 +49,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
