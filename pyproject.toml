@@ -1,7 +1,7 @@
 [project]
 name = "rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Modular hybrid retrieval-augmented generation pipeline with FastAPI and Qdrant"
 readme = "README.md"
 authors = [
     { name = "SiddharthSharabu-1729", email = "siddharthsharabu125@gmail.com" }

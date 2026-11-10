@@ -140,14 +140,19 @@ class QdrantVectorStore(BaseVectorStore):
         """Build Qdrant Filter from query metadata and ACL groups."""
         must_conditions: list[models.Condition] = []
 
+        acl_conditions: list[models.Condition] = []
         if query.acl_groups:
-            # Match any chunk whose acl_groups is empty (public) or shares a group with user
-            must_conditions.append(
+            acl_conditions.append(
                 models.FieldCondition(
                     key="acl_groups",
                     match=models.MatchAny(any=query.acl_groups),
                 )
             )
+        # Empty or missing ACL metadata denotes a public document. With no
+        # caller groups, only public documents are eligible for retrieval.
+        acl_conditions.append(
+            models.IsEmptyCondition(is_empty=models.PayloadField(key="acl_groups"))
+        )
 
         for key, val in query.filters.items():
             if isinstance(val, list):
@@ -159,9 +164,7 @@ class QdrantVectorStore(BaseVectorStore):
                     models.FieldCondition(key=f"metadata.{key}", match=models.MatchValue(value=val))
                 )
 
-        if not must_conditions:
-            return None
-        return models.Filter(must=must_conditions)
+        return models.Filter(must=must_conditions, should=acl_conditions)
 
     def _point_to_search_result(
         self,
